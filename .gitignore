@@ -1,0 +1,64 @@
+# Byte-compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs and debug files
+*.log
+*.out
+*.err
+
+# Environment files
+.env
+.venv/
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Distribution / Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtualenv and Python tool cache
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.coverage
+.cache/
+.dmypy.json
+.pyre/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.~undo-tree
+
+# Test output
+htmlcov/
+.tox/
+.nox/
+
+# Coverage reports
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Docker and CI/CD artifacts
+.dockerignore
+Dockerfile
+docker-compose.yml
+*.log
+*.pid
+
+# OS files
+.DS_Store
+Thumbs.db

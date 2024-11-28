@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Supermarket Product Finder with Segments</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+
+        #mapContainer {
+            width: 800px;
+            height: 600px;
+            border: 1px solid #ccc;
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .input-form {
+            position: absolute;
+            display: none;
+            padding: 10px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+        }
+
+        .input-form input[type="text"] {
+            width: 200px;
+            margin-bottom: 10px;
+        }
+
+        .input-form button {
+            padding: 5px 10px;
+        }
+
+        #itemsList {
+            margin-top: 20px;
+        }
+
+        #itemsList table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        #itemsList th,
+        #itemsList td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+
+        #itemsList th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Supermarket Product Finder</h1>
+    <p>Click on the map to add an item and enter its barcode.</p>
+
+    <div id="mapContainer">
+        <svg id="storeMap" width="100%" height="100%" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg"></svg>
+        <!-- Input Form for Barcode -->
+        <div id="inputForm" class="input-form">
+            <label for="barcode">Enter Barcode:</label><br>
+            <input type="text" id="barcode" placeholder="Barcode"><br>
+            <button onclick="submitBarcode()">Submit</button>
+            <button onclick="closeForm()">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Display Saved Items -->
+    <div id="itemsList">
+        <h2>Saved Items</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Barcode</th>
+                    <th>Aisle</th>
+                    <th>Position (x, y)</th>
+                </tr>
+            </thead>
+            <tbody id="itemsTableBody">
+                <!-- Items will be dynamically inserted here -->
+            </tbody>
+        </table>
+    </div>
+
+    <script src="https://d3js.org/d3-delaunay.v6.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.9.0/sql-wasm.js"></script>
+
+    <script>
+        // Initialize variables
+        let currentX, currentY;
+        const storeMap = document.getElementById("storeMap");
+        const inputForm = document.getElementById("inputForm");
+        const barcodeInput = document.getElementById("barcode");
+        let db; // SQL.js Database instance
+
+        // Segment Class: A rectangle with center (x, y), width, and height
+        class Segment {
+            constructor(x, y, width, height, aisleId, segmentId) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.aisleId = aisleId;
+                this.segmentId = segmentId;
+            }
+
+            // Check if a point (px, py) is within the segment
+            containsPoint(px, py) {
+                const { x, y } = this.getTopLeft();
+                return (
+                    px >= x &&
+                    px <= x + this.width &&
+                    py >= y &&
+                    py <= y + this.height
+                );
+            }
+
+            // Function to get the top-left corner based on the center (x, y)
+            getTopLeft() {
+                return { x: this.x - this.width / 2, y: this.y - this.height / 2 };
+            }
+
+            // Function to create the SVG rect element
+            toSVG() {
+                const { x, y } = this.getTopLeft();
+                const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                rect.setAttribute("x", x);
+                rect.setAttribute("y", y);
+                rect.setAttribute("width", this.width);
+                rect.setAttribute("height", this.height);
+                rect.setAttribute("fill", "#d9ead3");
+                rect.setAttribute("stroke", "#6abf60");
+
+                const aisleName = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                aisleName.setAttribute("x", this.x);
+                aisleName.setAttribute("y", this.y);
+                aisleName.setAttribute("fill", "black");
+                aisleName.setAttribute("font-size", "16");
+                aisleName.setAttribute("text-anchor", "middle");
+                aisleName.textContent = "" + this.aisleId + "-" + this.segmentId;
+                group.appendChild(rect);
+                group.appendChild(aisleName);
+                return group;
+            }
+        }
+
+
+        // Function to create a rectangular aisle
+        function createRectangleAisle(isVertical, centerX, centerY, numSegments, width, height, aisleId) {
+            const aisle = [];
+            const spacing = 0;
+
+            if (isVertical) {
+                const segmentWidth = width;
+                const segmentHeight = height / numSegments;
+                // Create vertical aisle (segments are aligned vertically, same x, different y)
+                for (let i = 0; i < numSegments; i++) {
+                    const segmentX = centerX; // Keep the x coordinate fixed for vertical arrangement
+                    const segmentY = centerY + (i - Math.floor(numSegments / 2)) * (segmentHeight + spacing); // Spread out vertically
+                    aisle.push(new Segment(segmentX, segmentY, segmentWidth, segmentHeight, aisleId, i + 1));
+                }
+            } else {
+                const segmentWidth = width / numSegments;
+                const segmentHeight = height;
+                // Create horizontal aisle (segments are aligned horizontally, same y, different x)
+                for (let i = 0; i < numSegments; i++) {
+                    const segmentX = centerX + (i - Math.floor(numSegments / 2)) * (segmentWidth + spacing); // Spread out horizontally
+                    const segmentY = centerY; // Keep the y coordinate fixed for horizontal arrangement
+                    aisle.push(new Segment(segmentX, segmentY, segmentWidth, segmentHeight, aisleId, i + 1));
+                }
+            }
+
+            return aisle;
+        }
+
+        // Function to create an aisle made of segments
+        function createAisle(aisleData) {
+            const aisle = [];
+            aisleData.forEach((data) => {
+                const segment = new Segment(data.x, data.y, data.width, data.height);
+                aisle.push(segment);
+            });
+            return aisle;
+        }
+
+        // Example aisle data (could be arranged in different ways)
+        const aisle1Data = [
+            { x: 150, y: 150, width: 100, height: 40 },
+            { x: 250, y: 150, width: 100, height: 40 },
+            { x: 350, y: 150, width: 100, height: 40 },
+        ];
+
+        const aisle2Data = [
+            { x: 150, y: 250, width: 80, height: 60 },
+            { x: 230, y: 250, width: 80, height: 60 },
+            { x: 310, y: 250, width: 80, height: 60 },
+        ];
+
+        // Create aisles
+        // x, y, segments, width, height
+        const aisle3 = createRectangleAisle(true, 150, 300, 3, 100, 500, 1);
+        const aisle4 = createRectangleAisle(true, 300, 300, 3, 100, 500, 2);
+        const aisle5 = createRectangleAisle(true, 450, 300, 3, 100, 500, 3);
+        const aisle6 = createRectangleAisle(true, 600, 300, 3, 100, 500, 4);
+        const aisle7 = createRectangleAisle(false, 375, 650, 3, 550, 100, 5);
+
+        // Draw the aisles to the SVG container
+        aisle3.forEach(segment => storeMap.appendChild(segment.toSVG()));
+        aisle4.forEach(segment => storeMap.appendChild(segment.toSVG()));
+        aisle5.forEach(segment => storeMap.appendChild(segment.toSVG()));
+        aisle6.forEach(segment => storeMap.appendChild(segment.toSVG()));
+        aisle7.forEach(segment => storeMap.appendChild(segment.toSVG()));
+
+
+        /*window.onload = async () => {
+            await initDatabase();
+        };*/
+
+        // Define variable to store the aisle and segment
+        let selectedAisleId = null;
+        let selectedSegmentId = null;
+        let selectedX = null;
+        let selectedY = null;
+
+        // Handle clicks on the SVG map
+        storeMap.addEventListener("click", (event) => {
+            const rect = storeMap.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+
+            // Check if the click is within any segment
+            let clickedSegment = null;
+            for (let aisle of [aisle3, aisle4, aisle5, aisle6, aisle7]) {
+                for (let segment of aisle) {
+                    if (segment.containsPoint(clickX, clickY)) {
+                        clickedSegment = segment;
+                        break;
+                    }
+                }
+                if (clickedSegment) break;
+            }
+
+            // If we clicked inside a segment, show the barcode input form
+            if (clickedSegment) {
+                selectedAisleId = clickedSegment.aisleId;
+                selectedSegmentId = clickedSegment.segmentId;
+                selectedX = clickX;
+                selectedY = clickY;
+
+                // Position and display the barcode input form near the click
+                const inputForm = document.getElementById("inputForm");
+                inputForm.style.left = `${event.clientX - rect.left + 10}px`;
+                inputForm.style.top = `${event.clientY - rect.top + 10}px`;
+                inputForm.style.display = "block";
+            }
+        });
+
+
+        // Function to close the input form
+        function closeForm() {
+            inputForm.style.display = "none";
+        }
+
+        // Function to submit the barcode and save the item
+        async function submitBarcode() {
+            const barcode = barcodeInput.value.trim();
+            if (!barcode) {
+                alert("Please enter a barcode.");
+                return;
+            }
+
+            // Save the item to the database
+            const stmt = db.prepare("INSERT INTO items (barcode, x, y) VALUES (?, ?, ?)");
+            stmt.run([barcode, currentX, currentY]);
+            stmt.free();
+
+            // Add a marker to the map (optional)
+            addItemMarker(currentX, currentY, barcode);
+
+            // Update the items list
+            loadItems();
+
+            // Hide the form
+            inputForm.style.display = "none";
+        }
+
+        // Function to add a visual marker for the item
+        function addItemMarker(x, y, barcode) {
+            const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            marker.setAttribute("cx", x);
+            marker.setAttribute("cy", y);
+            marker.setAttribute("r", 5);
+            marker.setAttribute("fill", "blue");
+            marker.setAttribute("title", `Barcode: ${barcode}\nAisle: ${aisleId}\nSegment: ${segmentId}`);
+            storeMap.appendChild(marker);
+        }
+
+        // Function to load and display all items (for simplicity)
+        function loadItems() {
+            const stmt = db.prepare("SELECT * FROM items");
+            const items = [];
+            while (stmt.step()) {
+                const row = stmt.getAsObject();
+                items.push(row);
+            }
+            stmt.free();
+
+            // Clear existing table body
+            const tableBody = document.getElementById("itemsTableBody");
+            tableBody.innerHTML = "";
+
+            // Populate table with items
+            items.forEach(item => {
+                const tr = document.createElement("tr");
+                const tdBarcode = document.createElement("td");
+                tdBarcode.textContent = item.barcode;
+                const tdPosition = document.createElement("td");
+                tdPosition.textContent = `(${item.x.toFixed(1)}, ${item.y.toFixed(1)})`;
+                tr.appendChild(tdBarcode);
+                tr.appendChild(tdPosition);
+                tableBody.appendChild(tr);
+            });
+        }
+
+        // Initialize the database (placeholder)
+        async function initDatabase() {
+            const SQL = await initSqlJs();
+            db = new SQL.Database();
+            db.run("CREATE TABLE items (id INTEGER PRIMARY KEY, barcode TEXT, x REAL, y REAL);");
+        }
+
+        // Run the database initialization
+        initDatabase();
+    </script>
+</body>
+
+</html>

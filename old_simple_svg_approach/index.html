@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Supermarket Product Finder (Tile-Based)</title>
+    <style>
+        #mapContainer {
+            width: 800px;
+            height: 600px;
+            border: 1px solid #ccc;
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .input-form {
+            display: none;
+            position: absolute;
+            padding: 10px;
+            background-color: white;
+            border: 1px solid #ccc;
+            z-index: 10;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Supermarket Product Finder</h1>
+    <p>Click on the map to add an item and enter its barcode.</p>
+
+    <div id="mapContainer">
+        <div id="inputForm" class="input-form">
+            <label for="barcode">Enter Barcode:</label>
+            <input type="text" id="barcode" placeholder="Barcode">
+            <button onclick="submitBarcode()">Submit</button>
+            <button onclick="closeForm()">Cancel</button>
+        </div>
+    </div>
+
+    <button onclick="loadMap()">Load Map</button>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.9.0/sql-wasm.js"></script>
+    <script src="https://d3js.org/d3-delaunay.v6.min.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>

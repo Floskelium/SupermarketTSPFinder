@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supermarket Pathfinding</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            display: flex;
+            flex-direction: row;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        /* Sidebar styling */
+        #sidebar {
+            width: 250px;
+            background-color: #333;
+            color: white;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            position: fixed;
+            left: 0;
+            top: 0;
+            overflow-y: auto;
+        }
+        #sidebar h1 {
+            font-size: 24px;
+            color: #ffdd57;
+            margin-bottom: 10px;
+        }
+        #item-input {
+            padding: 10px;
+            margin-bottom: 10px;
+            border: none;
+            border-radius: 5px;
+            width: 100%;
+        }
+        #sidebar > button {
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            background-color: #ffdd57;
+            color: #333;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #item-list {
+            list-style: none;
+            margin-top: 20px;
+            padding: 0;
+        }
+        #item-list li {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+            padding: 10px;
+            background-color: #444;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        #item-list li:hover {
+            background-color: #555;
+        }
+        #item-list li input[type="checkbox"] {
+            display: none;
+        }
+        /* Custom checkbox styling */
+        .custom-checkbox {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #ffdd57;
+            border-radius: 5px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 10px;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+        /* Checkmark icon (using CSS pseudo-element) */
+        .custom-checkbox::after {
+            content: "";
+            width: 10px;
+            height: 10px;
+            background-color: #ffdd57;
+            display: none;
+            border-radius: 3px;
+        }
+        /* Show checkmark on checked items */
+        #item-list li.completed .custom-checkbox {
+            /*background-color: #ffdd57;*/
+            border-color: #ffdd57;
+        }
+        #item-list li.completed .custom-checkbox::after {
+            display: block;
+            transform-origin: bottom left;
+            clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+        }
+        /* Strikethrough effect on completed items */
+        #item-list li label {
+            margin-left: 5px;
+            flex-grow: 1;
+            color: white;
+            transition: color 0.3s;
+        }
+        #item-list li.completed label {
+            text-decoration: line-through;
+            color: #aaa;
+        }
+        #popup-marker {
+            display: none;
+            position: absolute;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #333;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Main content styling */
+        #map-container {
+            margin-left: 250px;
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #f0f0f0;
+            height: 100vh;
+        }
+    </style>
+
+    <script type="importmap"> 
+        { "imports": 
+            {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", 
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+            }
+        } 
+    </script>
+</head>
+<body>
+    <!-- Sidebar for grocery list -->
+    <div id="sidebar">
+        <h1>Grocery List</h1>
+        <input type="text" id="item-input" placeholder="Enter grocery item">
+        <button id="add-button" onclick="addItem()">Add</button>
+        
+        <ul id="item-list"></ul>
+        <button onclick="findPath()">Find Path</button>
+    </div>
+    
+    <!-- Content area for 3D visualization -->
+    <div id="map-container"></div>
+
+    <!-- Popup marker for collection points -->
+    <div id="popup-marker">Collect items here</div>
+
+
+    <script>
+        const itemList = document.getElementById("item-list");
+        const popupMarker = document.getElementById("popup-marker");
+        
+        function addItem() {
+            const itemInput = document.getElementById("item-input");
+            const itemText = itemInput.value.trim();
+            if (itemText) {
+                const listItem = document.createElement("li");
+                listItem.classList.add("grocery-item");
+
+                const checkbox = document.createElement("input");
+                checkbox.type = "checkbox";
+
+                const customCheckbox = document.createElement("span");
+                customCheckbox.classList.add("custom-checkbox");
+
+                const label = document.createElement("label");
+                label.textContent = itemText;
+
+                // Toggle the item on click
+                listItem.addEventListener("click", () => toggleItem(listItem));
+
+                listItem.appendChild(checkbox);
+                listItem.appendChild(customCheckbox);
+                listItem.appendChild(label);
+                itemList.appendChild(listItem);
+
+                itemInput.value = "";
+            }
+        }
+
+        function toggleItem(listItem) {
+            listItem.classList.toggle("completed");
+        }
+        
+        // Add items on "Enter" key press
+        document.getElementById("item-input").addEventListener("keyup", function(event) {
+            if (event.key === "Enter") {
+                addItem();
+            }
+        });
+        
+
+    </script>
+
+
+    
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, balls = [], ballSpeed, path, collectionPoints = [], currentCollectionPointIndex = 0;
+
+        function init() {
+            // Initialize 3D scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f0f0);
+
+            camera = new THREE.PerspectiveCamera(75, (window.innerWidth - 250) / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 5, 10);
+
+            renderer = new THREE.WebGLRenderer();
+            // width minus sidebar
+            renderer.setSize(window.innerWidth -250, window.innerHeight);
+            document.getElementById('map-container').appendChild(renderer.domElement);
+
+            // add controls
+            const controls = new OrbitControls(camera, renderer.domElement);
+
+
+            // Load map data and render tiles
+        fetch('/map-data')
+            .then(response => response.json())
+            .then(mapData => {
+                // Calculate the map dimensions to adjust camera position dynamically
+                const mapWidth = Math.max(...mapData.tiles.map(tile => tile.x)) + 1;
+                const mapHeight = Math.max(...mapData.tiles.map(tile => tile.y)) + 1;
+
+                scene.position.set(-mapWidth / 2, 0, -mapHeight / 2);
+
+                // Set up orthographic camera with dynamic bounds
+                const tiltAngle = THREE.MathUtils.degToRad(20);
+
+                const aspectRatio = window.innerWidth / window.innerHeight;
+                const halfWidth = mapWidth / 2;
+                const halfHeight = mapHeight / 2;
+
+                const loader = new FBXLoader();
+
+                mapData.tiles.forEach(tile => {
+                    const { x, y, type, rotation } = tile;
+
+                    // Random grayscale color and slight height variation
+                    const grayScale = Math.floor(Math.random() * 15) + 50; // Range: 50-65
+                    const color = new THREE.Color(`rgb(${grayScale}, ${grayScale}, ${grayScale})`);
+                
+                    const geometry = new THREE.BoxGeometry(1, 0.2, 1);  // Tile size
+                    const material = new THREE.MeshBasicMaterial({ color });
+                    const cube = new THREE.Mesh(geometry, material);
+                    cube.position.set(x, 0, y);
+                    scene.add(cube);
+
+                    // load asset if given
+                    if (type != undefined) {
+                        loader.load(`/model/${type}.fbx`, (object) => {
+                            object.scale.set(0.01, 0.01, 0.01); 
+                            object.position.set(x, 0.2, y);
+                            if(rotation != undefined) {
+                                object.rotation.y = rotation/180 * Math.PI;
+                            }
+                            scene.add(object);
+
+                            if (type == "display-fruit") {
+                                applyShimmerEffect(object);
+                            }
+                        });
+                    }
+                });
+
+                // Add lights
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+                scene.add(ambientLight);
+
+                const pointLight = new THREE.PointLight(0xffffff, 1);
+                pointLight.position.set(1, 1, 1);
+                scene.add(pointLight);
+
+                renderer.setAnimationLoop(renderScene);
+            });
+        }
+
+        window.addEventListener("resize", () => {
+            renderer.setSize(window.innerWidth - 250, window.innerHeight);
+            camera.aspect = (window.innerWidth - 250) / window.innerHeight;
+            camera.updateProjectionMatrix();
+        });
+
+        // Function to render the scene
+        function renderScene() {
+            // Update each ball's position along the path
+            balls.forEach(ball => {
+                // Increment the progress of each ball along the path
+                ball.progress += ballSpeed;
+                if (ball.progress > 1) ball.progress -= 1; // Loop the balls back to the start
+                
+                // Set the ball's position along the path based on updated progress
+                const position = path.getPointAt(ball.progress);
+                ball.mesh.position.copy(position);
+
+                // Optionally orient the balls to follow the path's tangent direction
+                const tangent = path.getTangentAt(ball.progress).normalize();
+                ball.mesh.lookAt(position.clone().add(tangent));
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        // Function to request pathfinding from the server
+        function findPath() {
+            const listItems = document.getElementById('item-list').getElementsByTagName('li');
+            const items = map(listItems, getText);
+
+            fetch('/pathfind', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: items })
+            })
+            .then(response => response.json())
+            .then(data => drawPath(data.path, data.pickup))
+            .catch(error => console.error('Error finding path:', error));
+        }
+
+        // Function to draw the path in 3D scene
+        function drawPath(pathCoords, pickupCoords) {
+            // Clear any existing path lines
+            const existingLines = scene.children.filter(child => child.isLine);
+            existingLines.forEach(line => scene.remove(line));
+
+            // Create line geometry for the path
+            const points = pathCoords.map(p => new THREE.Vector3(p.x, 0.2, p.y));
+
+            collectionPoints = pickupCoords.map(p => new THREE.Vector3(p.x, 0.2, p.y));
+            //updatePopupMarker();
+
+            path = new THREE.CatmullRomCurve3(points);
+            
+            // Create a thick line along the path
+            const geometry = new THREE.TubeGeometry(path, 64, 0.1, 8, false);
+            const material = new THREE.MeshBasicMaterial({ color: 0x0077ff, opacity: 0.3, transparent: true });
+            const line = new THREE.Mesh(geometry, material);
+            scene.add(line);
+
+            // Create moving balls along the path
+            const ballGeometry = new THREE.SphereGeometry(0.08, 8, 8);
+            const ballMaterial = new THREE.MeshBasicMaterial({ color: 0xadd8e6 });
+            
+            const ballCount = points.length;
+            ballSpeed = 0.01 / ballCount;
+            for (let i = 0; i < ballCount; i++) {
+                const ball = new THREE.Mesh(ballGeometry, ballMaterial);
+                // Set an initial position along the path using the getPointAt method
+                const position = path.getPointAt(i / ballCount);
+                ball.position.copy(position);
+                scene.add(ball);
+                balls.push({ mesh: ball, progress: i / ballCount });
+            }
+        }
+
+        function updatePopupMarker() {
+            if (currentCollectionPointIndex < collectionPoints.length) {
+                const point = collectionPoints[currentCollectionPointIndex];
+                const vector = point.clone().project(camera);
+
+                console.log(point);
+                console.log(vector);
+                
+                const x = (-vector.x * 0.5 + 0.5) * renderer.domElement.clientWidth + 250; // Account for sidebar width
+                const y = ((-1+vector.z) + 0.5) * renderer.domElement.clientHeight;
+                
+                popupMarker.style.left = `${x}px`;
+                popupMarker.style.top = `${y}px`;
+                popupMarker.style.display = "block";
+
+                currentCollectionPointIndex++;
+            } else {
+                popupMarker.style.display = "none"; // Hide when all points are visited
+            }
+        }
+
+
+        function map(arrayLike, fn) {
+            var ret = [], i = -1, len = arrayLike.length;
+            while (++i < len) ret[i] = fn(arrayLike[i]);
+            return ret;
+        }
+
+        function getText(node) {
+            if (node.nodeType === 3) return node.data;
+            var txt = '';
+            if (node = node.firstChild) do {
+                txt += getText(node);
+            } while (node = node.nextSibling);
+            return txt;
+        }
+
+
+        const shimmerMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                color: { value: new THREE.Color(0xffff00) },  // Yellow shimmer color
+                shineSpeed: { value: 2.0 },                    // Speed of the shimmer effect
+                time: { value: 0.0 },                          // Time for animation
+                map: { value: null },                          // Texture map (colormap.png)
+            },
+            vertexShader: `
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                varying vec2 vUv;  // UV coordinates for texture mapping
+                void main() {
+                    vNormal = normalize(normalMatrix * normal);
+                    vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
+                    vUv = uv;  // Pass UV coordinates to fragment shader
+                    gl_Position = projectionMatrix * vec4(vPosition, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform vec3 color;        // Shimmer color (yellow)
+                uniform float shineSpeed;  // Speed of the shimmer effect
+                uniform float time;        // Time for animation
+                uniform sampler2D map;     // The texture map (colormap.png)
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                varying vec2 vUv;
+
+                void main() {
+                    // Sample the base texture color from the colormap.png
+                    vec4 baseColor = texture2D(map, vUv); 
+
+                    // Generate the shimmer effect based on position and time
+                    float shimmerFrequency = 12.0; // Reduce this value for smaller shimmer effect
+                    float shineEffect = sin(vPosition.x * shimmerFrequency + time * shineSpeed) * 0.5 + 0.5;
+
+                    // Mix the base color with the shimmer effect (add the shimmer to the base texture)
+                    vec3 finalColor = mix(baseColor.rgb, color, shineEffect); 
+
+                    // Apply the color with transparency for the shimmer effect
+                    gl_FragColor = vec4(finalColor, baseColor.a); // Preserve the alpha (transparency) from the base texture
+                }
+            `,
+            transparent: true,   // Enable transparency
+            depthWrite: false   // Avoid interfering with the depth buffer
+        });
+        function applyShimmerEffect(fbxObject) {
+            const textureLoader = new THREE.TextureLoader();
+            const texture = textureLoader.load('/model/colormap.png'); 
+            console.log(texture);
+
+            fbxObject.traverse((child) => {
+                if (child.isMesh) {        
+                    // Set the texture as the material map
+                    shimmerMaterial.uniforms.map.value = texture;
+                    child.material = shimmerMaterial; // Apply the shimmer shader
+                }
+            });
+
+            // Animate the shimmer effect by updating the time uniform
+            const clock = new THREE.Clock();
+            function animateShimmer() {
+                shimmerMaterial.uniforms.time.value = clock.getElapsedTime();
+                requestAnimationFrame(animateShimmer);
+            }
+            animateShimmer();
+        }
+        
+        window.findPath = findPath;
+        init();
+    </script>
+
+
+
+</body>
+</html>

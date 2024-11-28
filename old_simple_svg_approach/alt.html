@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Supermarket Map</title>
+    <script src="https://d3js.org/d3-delaunay.v6.min.js"></script>
+    <style>
+        svg {
+            border: 1px solid #ccc;
+        }
+
+        .aisle {
+            fill: rgba(0, 0, 255, 0.1);
+            stroke: blue;
+        }
+
+        .item {
+            fill: red;
+            r: 5;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Supermarket Item Locator</h1>
+    <svg id="map" width="800" height="600"></svg>
+    <p>Click on the map to add an item with a barcode.</p>
+</body>
+<script>
+    const aisles = [
+        { id: "aisle1", outline: [[100, 100], [300, 100], [300, 300], [100, 300]] },
+        { id: "aisle2", outline: [[400, 100], [600, 100], [600, 300], [400, 300]] },
+        { id: "aisle3", outline: [[200, 400], [400, 400], [400, 500], [200, 500]] }
+        // Add more aisles as needed
+    ];
+
+    const svg = d3.select("#map");
+
+    // Draw aisles on the map
+    aisles.forEach(aisle => {
+        svg.append("polygon")
+            .attr("points", aisle.outline.map(d => d.join(",")).join(" "))
+            .attr("class", "aisle")
+            .attr("data-id", aisle.id);
+    });
+
+    // Set up IndexedDB to store items
+    const dbRequest = indexedDB.open("SupermarketDB", 1);
+    dbRequest.onupgradeneeded = function (event) {
+        const db = event.target.result;
+        db.createObjectStore("items", { keyPath: "id", autoIncrement: true });
+    };
+
+    // Get points for Voronoi diagram (centroids of aisles)
+    const points = aisles.map(aisle => {
+        const [xSum, ySum] = aisle.outline.reduce(
+            ([accX, accY], [x, y]) => [accX + x, accY + y],
+            [0, 0]
+        );
+        const n = aisle.outline.length;
+        return [xSum / n, ySum / n];
+    });
+
+    const delaunay = d3.Delaunay.from(points);
+    const voronoi = delaunay.voronoi([0, 0, svg.attr("width"), svg.attr("height")]);
+
+    // Map each Voronoi cell to an aisle
+    const aisleMap = {};
+    points.forEach((_, index) => {
+        aisleMap[index] = aisles[index].id;
+    });
+
+    function findClosestAisle(x, y) {
+        const cellIndex = delaunay.find(x, y);
+        return aisleMap[cellIndex];
+    }
+
+    // Add item on map click
+    svg.on("click", async function (event) {
+        const [x, y] = d3.pointer(event);
+        const aisleId = findClosestAisle(x, y);
+        const barcode = prompt("Enter barcode:");
+        if (!barcode) return;
+
+        const item = { barcode, x, y, aisleId };
+        console.log("Saving item:", item);
+        saveItem(item);
+
+        // Visualize item
+        svg.append("circle")
+            .attr("cx", x)
+            .attr("cy", y)
+            .attr("r", 5)
+            .attr("fill", "red")
+            .attr("class", "item")
+            .attr("data-barcode", barcode);
+    });
+
+    function saveItem(item) {
+        const dbRequest = indexedDB.open("SupermarketDB", 1);
+        dbRequest.onsuccess = function (event) {
+            const db = event.target.result;
+            const transaction = db.transaction("items", "readwrite");
+            const store = transaction.objectStore("items");
+            store.add(item);
+        };
+        dbRequest.onerror = function (event) {
+            console.error("Error opening database:", event.target.error);
+        };
+    }
+
+    function loadItems() {
+        const dbRequest = indexedDB.open("SupermarketDB", 1);
+        dbRequest.onsuccess = function (event) {
+            const db = event.target.result;
+            const transaction = db.transaction("items", "readonly");
+            const store = transaction.objectStore("items");
+            const getAllRequest = store.getAll();
+
+            getAllRequest.onsuccess = function (event) {
+                const items = event.target.result;
+                items.forEach(item => {
+                    svg.append("circle")
+                        .attr("cx", item.x)
+                        .attr("cy", item.y)
+                        .attr("r", 5)
+                        .attr("fill", "red")
+                        .attr("class", "item")
+                        .attr("data-barcode", item.barcode);
+                });
+            };
+        };
+    }
+
+    // Load items on page load
+    loadItems();
+</script>
+
+</html>

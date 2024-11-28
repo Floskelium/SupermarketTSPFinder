@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Supermarket Product Finder</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+
+        #mapContainer {
+            width: 800px;
+            height: 600px;
+            border: 1px solid #ccc;
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .input-form {
+            position: absolute;
+            display: none;
+            padding: 10px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+        }
+
+        .input-form input[type="text"] {
+            width: 200px;
+            margin-bottom: 10px;
+        }
+
+        .input-form button {
+            padding: 5px 10px;
+        }
+
+        #itemsList {
+            margin-top: 20px;
+        }
+
+        #itemsList table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        #itemsList th,
+        #itemsList td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+
+        #itemsList th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Supermarket Product Finder</h1>
+    <p>Click on the map to add an item and enter its barcode.</p>
+
+    <div id="mapContainer">
+        <!-- SVG Store Layout -->
+        <svg id="storeMap" width="100%" height="100%" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg">
+            <!-- Aisles will be dynamically drawn here -->
+        </svg>
+
+        <!-- Input Form for Barcode -->
+        <div id="inputForm" class="input-form">
+            <label for="barcode">Enter Barcode:</label><br>
+            <input type="text" id="barcode" placeholder="Barcode"><br>
+            <button onclick="submitBarcode()">Submit</button>
+            <button onclick="closeForm()">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Buttons to Save and Load Data -->
+    <button onclick="saveDatabase()">Save Data</button>
+    <button onclick="loadDatabase()">Load Data</button>
+
+    <!-- Display Saved Items -->
+    <div id="itemsList">
+        <h2>Saved Items</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Barcode</th>
+                    <th>Aisle</th>
+                    <th>Position (x, y)</th>
+                </tr>
+            </thead>
+            <tbody id="itemsTableBody">
+                <!-- Items will be dynamically inserted here -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Include D3-Delaunay and SQL.js via CDN -->
+    <script src="https://d3js.org/d3-delaunay.v6.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.9.0/sql-wasm.js"></script>
+
+    <script>
+        // Initialize variables
+        let currentX, currentY;
+        const storeMap = document.getElementById("storeMap");
+        const inputForm = document.getElementById("inputForm");
+        const barcodeInput = document.getElementById("barcode");
+        let db; // SQL.js Database instance
+
+        // Define Aisles with their outlines
+        const aisles = [
+            { id: "aisle1", outline: [[100, 100], [200, 100], [200, 500], [100, 500]], orientation: 'vertical', segments: 1 }, // Split into left and right
+            { id: "aisle2", outline: [[250, 100], [350, 100], [350, 500], [250, 500]], orientation: 'vertical', segments: 2 },
+            { id: "aisle3", outline: [[400, 100], [500, 100], [500, 500], [400, 500]], orientation: 'vertical', segments: 3 },
+            { id: "aisle4", outline: [[550, 100], [650, 100], [650, 500], [550, 500]], orientation: 'vertical', segments: 2 },
+            { id: "aisle5", outline: [[100, 600], [650, 600], [650, 700], [100, 700]], orientation: 'horizontal', segments: 2 } // Split into top and bottom
+        ];
+
+        // Function to initialize the SQL.js database
+        async function initDatabase() {
+            const SQL = await initSqlJs({
+                locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.9.0/${file}`
+            });
+            db = new SQL.Database();
+
+            // Create the items table
+            db.run(`
+            CREATE TABLE IF NOT EXISTS items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                barcode TEXT NOT NULL,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                aisleId TEXT NOT NULL
+            );
+        `);
+        }
+
+        // Initialize the database on page load
+        window.onload = async () => {
+            await initDatabase();
+            setupVoronoi();
+            drawAisleDivisions();
+        };
+
+        // Function to setup Voronoi diagram using D3-Delaunay
+        function setupVoronoi() {
+            // Calculate centroids of aisles
+            const points = aisles.map(aisle => {
+                const centroids = getCentroid(aisle.outline, aisle.orientation, aisle.segments);
+                return centroids;
+            }).flat();
+
+            // Create Delaunay and Voronoi
+            const delaunay = d3.Delaunay.from(points);
+            const voronoi = delaunay.voronoi([0, 0, 800, 800]);
+
+            // Store the Voronoi diagram for later use
+            window.voronoi = voronoi;
+            window.delaunay = delaunay;
+            window.aisleMap = aisles;
+
+
+            for (const cell of voronoi.cellPolygons()) {
+                console.log(cell);
+                if (cell) {
+                    drawPath(cell);
+                }
+            }
+        }
+
+        // Function to calculate the centroid of a polygon
+        function getCentroid(points, orientation, segments) {
+            if (orientation === 'vertical') {
+                // Split into left and right, or more segments
+                let leftPoints = [];
+                let rightPoints = [];
+
+                points.forEach(([x, y], i) => {
+                    if (x < (points[0][0] + points[1][0]) / 2) {
+                        leftPoints.push([x, y]);
+                    } else {
+                        rightPoints.push([x, y]);
+                    }
+                });
+
+                // Calculate centroids for left and right sides or further subsegments
+                let leftCentroid = calculateCentroidOfPoints(leftPoints);
+                let rightCentroid = calculateCentroidOfPoints(rightPoints);
+
+                return orientation === 'vertical' ? [leftCentroid, rightCentroid] : [];
+            } else if (orientation === 'horizontal') {
+                // Split into top and bottom
+                let topPoints = [];
+                let bottomPoints = [];
+
+                points.forEach(([x, y], i) => {
+                    if (y < (points[0][1] + points[3][1]) / 2) {
+                        topPoints.push([x, y]);
+                    } else {
+                        bottomPoints.push([x, y]);
+                    }
+                });
+
+                let topCentroid = calculateCentroidOfPoints(topPoints);
+                let bottomCentroid = calculateCentroidOfPoints(bottomPoints);
+
+                return orientation === 'horizontal' ? [topCentroid, bottomCentroid] : [];
+            }
+        }
+
+        function calculateCentroidOfPoints(points) {
+            let x = 0, y = 0;
+            points.forEach(([px, py]) => {
+                x += px;
+                y += py;
+            });
+            return [x / points.length, y / points.length];
+        }
+
+        // Handle clicks on the SVG map
+        storeMap.addEventListener("click", (event) => {
+            const rect = storeMap.getBoundingClientRect();
+            currentX = event.clientX - rect.left;
+            currentY = event.clientY - rect.top;
+
+            // Position the form near the click location
+            inputForm.style.left = `${event.clientX - rect.left + 10}px`;
+            inputForm.style.top = `${event.clientY - rect.top + 10}px`;
+            inputForm.style.display = "block";
+
+            barcodeInput.value = "";  // Reset the input
+            barcodeInput.focus();
+        });
+
+        // Function to close the input form
+        function closeForm() {
+            inputForm.style.display = "none";
+        }
+
+        // Function to submit the barcode and save the item
+        async function submitBarcode() {
+            const barcode = barcodeInput.value.trim();
+            if (!barcode) {
+                alert("Please enter a barcode.");
+                return;
+            }
+
+            // Find the closest aisle using Voronoi
+            const aisleId = findAisleForItem(currentX, currentY);
+
+            // Save the item to the database
+            const stmt = db.prepare("INSERT INTO items (barcode, x, y, aisleId) VALUES (?, ?, ?, ?)");
+            stmt.run([barcode, currentX, currentY, aisleId]);
+            stmt.free();
+
+            // Add a marker to the map
+            addItemMarker(currentX, currentY, aisleId, barcode);
+
+            // Update the items list
+            loadItems();
+
+            // Hide the form
+            inputForm.style.display = "none";
+        }
+
+        // Function to find the closest aisle using Voronoi
+        function findAisleForItem(x, y) {
+            const index = window.delaunay.find(x, y);
+            return window.aisleMap[index].id;
+        }
+
+        // Function to add a visual marker for the item
+        function addItemMarker(x, y, aisleId, barcode) {
+            const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            marker.setAttribute("cx", x);
+            marker.setAttribute("cy", y);
+            marker.setAttribute("r", 5);
+            marker.setAttribute("fill", "blue");
+            marker.setAttribute("title", `Barcode: ${barcode}\nAisle: ${aisleId}`);
+            storeMap.appendChild(marker);
+        }
+
+        // Function to load and display all items
+        function loadItems() {
+            const stmt = db.prepare("SELECT * FROM items");
+            const items = [];
+            while (stmt.step()) {
+                const row = stmt.getAsObject();
+                items.push(row);
+            }
+            stmt.free();
+
+            // Clear existing table body
+            const tableBody = document.getElementById("itemsTableBody");
+            tableBody.innerHTML = "";
+
+            // Populate table with items
+            items.forEach(item => {
+                const tr = document.createElement("tr");
+                const tdBarcode = document.createElement("td");
+                tdBarcode.textContent = item.barcode;
+                const tdAisle = document.createElement("td");
+                tdAisle.textContent = item.aisleId;
+                const tdPosition = document.createElement("td");
+                tdPosition.textContent = `(${item.x.toFixed(1)}, ${item.y.toFixed(1)})`;
+                tr.appendChild(tdBarcode);
+                tr.appendChild(tdAisle);
+                tr.appendChild(tdPosition);
+                tableBody.appendChild(tr);
+
+                // Optionally, add markers on the map
+                addItemMarker(item.x, item.y, item.aisleId, item.barcode);
+            });
+        }
+
+        // Function to save the database to local storage
+        function saveDatabase() {
+            const binaryArray = db.export();
+            const binaryString = String.fromCharCode.apply(null, binaryArray);
+            const base64String = btoa(binaryString);
+            localStorage.setItem('storeMapDB', base64String);
+            alert("Database saved to local storage.");
+        }
+
+        // Function to load the database from local storage
+        async function loadDatabase() {
+            const base64String = localStorage.getItem('storeMapDB');
+            if (!base64String) {
+                alert("No saved database found in local storage.");
+                return;
+            }
+            const binaryString = atob(base64String);
+            const binaryArray = Uint8Array.from(binaryString, c => c.charCodeAt(0));
+            db = new SQL.Database(binaryArray);
+            alert("Database loaded from local storage.");
+
+            // Clear existing markers
+            const existingMarkers = storeMap.querySelectorAll("circle");
+            existingMarkers.forEach(marker => marker.remove());
+
+            // Reload Voronoi and items
+            setupVoronoi();
+            loadItems();
+        }
+
+
+
+        function drawAisleDivisions() {
+            aisles.forEach(aisle => {
+                // Draw main aisle
+                const aislePath = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                aislePath.setAttribute("id", aisle.id);
+                aislePath.setAttribute("points", aisle.outline.map(p => p.join(',')).join(' '));
+                aislePath.setAttribute("fill", "#cfe2f3");
+                aislePath.setAttribute("stroke", "#6c8ebf");
+                storeMap.appendChild(aislePath);
+
+                // Draw aisle name in the center
+                const centroid = calculateCentroidOfPoints(aisle.outline);
+                const aisleName = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                aisleName.setAttribute("x", centroid[0]);
+                aisleName.setAttribute("y", centroid[1]);
+                aisleName.setAttribute("fill", "black");
+                aisleName.setAttribute("font-size", "16");
+                aisleName.setAttribute("text-anchor", "middle");
+                aisleName.textContent = aisle.id;
+                storeMap.appendChild(aisleName);
+
+                // draw center split line
+                if (aisle.orientation === 'vertical') {
+                    const xSplit = (aisle.outline[0][0] + aisle.outline[1][0]) / 2;
+                    drawLine(xSplit, aisle.outline[0][1], xSplit, aisle.outline[2][1]);
+                } else if (aisle.orientation === 'horizontal') {
+                    const ySplit = (aisle.outline[0][1] + aisle.outline[3][1]) / 2;
+                    drawLine(aisle.outline[0][0], ySplit, aisle.outline[1][0], ySplit);
+                }
+
+                // draw segments
+                for (let i = 1; i < aisle.segments; i++) {
+                    if (aisle.orientation === 'vertical') {
+                        const height = (aisle.outline[3][1] - aisle.outline[0][1]) / aisle.segments;
+                        const yPoint = aisle.outline[0][1] + i * height;
+                        drawLine(aisle.outline[0][0], yPoint, aisle.outline[1][0], yPoint);
+                    } else if (aisle.orientation === 'horizontal') {
+                        const width = (aisle.outline[1][0] - aisle.outline[0][0]) / aisle.segments;
+                        const xPoint = aisle.outline[0][0] + i * width;
+                        drawLine(xPoint, aisle.outline[0][1], xPoint, aisle.outline[3][1]);
+                    }
+                }
+
+
+            });
+        }
+
+        function drawLine(x1, y1, x2, y2) {
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            path.setAttribute("x1", x1);
+            path.setAttribute("y1", y1);
+            path.setAttribute("x2", x2);
+            path.setAttribute("y2", y2);
+            path.setAttribute("stroke", "#6c8ebf");
+            storeMap.appendChild(path);
+        }
+
+        function drawPath(points) {
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+            path.setAttribute("points", points.map(p => p.join(',')).join(' '));
+            path.setAttribute("fill", "none");
+            path.setAttribute("stroke", "grey");
+            path.setAttribute("stroke-dasharray", "5,5");
+            storeMap.appendChild(path);
+        }
+    </script>
+
+</body>
+
+</html>
+
+<!--
+I wanna make a supermarket product finding tool by marking products at gps locations in the supermarket and navigate the users checklist most efficiently.
+I have a scanner and can scan bar codes in the shop.
+i have a html custom svg map where one can input an item by clicking a position and then input the barcode
+the aisle is defined by the voronoi closest to the clicked point.
+
+i want aisles now to be split into left and right half or up and bottom (they need to have an orientation defined now) and also divided in their height/width in multiple segments.
+
+i got this code:
+-->
